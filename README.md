@@ -1,4 +1,4 @@
-# cltl-template
+# cltl-chat-backend
 
-Simple text based chat UI.
+Dummy backend to connect to cltl-chat-ui.
  

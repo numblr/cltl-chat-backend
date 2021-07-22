@@ -1,20 +1,17 @@
 import logging.config
 
+from cltl.chatbackend.api import ChatProcessor
+from cltl.chatbackend.reverse import ReverseChatProcessor
 from cltl.combot.infra.event.kombu import KombuEventBusContainer
 from cltl.combot.infra.event.memory import SynchronousEventBusContainer
 from cltl.combot.infra.topic_worker import TopicWorker
-from flask import Flask
-
-from cltl.chatui.api import Chat
-from cltl.chatui.memory import MemoryChat
-from rest.endpoint import create_app
 
 logging.config.fileConfig('config/logging.config')
 
 from cltl.combot.infra.config.k8config import K8LocalConfigurationContainer
 from cltl.combot.infra.di_container import singleton
 from cltl.combot.infra.resource.threaded import ThreadedResourceContainer
-from event.consumer import ResponseWorker
+from event.consumer import ProcessorWorker
 
 logger = logging.getLogger(__name__)
 
@@ -33,22 +30,16 @@ else:
 class Application(ApplicationContainer):
     @property
     @singleton
-    def chat(self) -> Chat:
-        return MemoryChat()
+    def processor(self) -> ChatProcessor:
+        return ReverseChatProcessor()
 
     @property
     @singleton
     def consumer(self) -> TopicWorker:
-        return ResponseWorker(self.chat, self.event_bus, self.resource_manager, self.config_manager)
-
-    @property
-    @singleton
-    def backend(self) -> Flask:
-        return create_app(self.chat, self.event_bus, self.config_manager)
+        return ProcessorWorker(self.processor, self.event_bus, self.resource_manager, self.config_manager)
 
     def run(self):
         self.consumer.start()
-        self.backend.run(host="0.0.0.0", threaded=False, processes=1)
 
 
 if __name__ == '__main__':

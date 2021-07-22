@@ -1,15 +1,2 @@
-Flask
-
-connexion
-marshmallow
-marshmallow-dataclass
-PyYAML
-
-typer
-uvicorn
-apidaora
-markdown
-kombu
-
 cltl.combot
-
+cltl.chat-ui
