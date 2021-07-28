@@ -1,46 +1,49 @@
+import json
 import logging.config
+from types import SimpleNamespace
 
-from cltl.chatbackend.api import ChatProcessor
-from cltl.chatbackend.reverse import ReverseChatProcessor
-from cltl.combot.infra.event.kombu import KombuEventBusContainer
-from cltl.combot.infra.event.memory import SynchronousEventBusContainer
-from cltl.combot.infra.topic_worker import TopicWorker
+from kombu.serialization import register
+
+from chatbackend_app.app import Application, ApplicationContainer
+from cltl.combot.infra.event.kombu import KombuEventBus
+from cltl.combot.infra.event.memory import SynchronousEventBus
 
 logging.config.fileConfig('config/logging.config')
 
-from cltl.combot.infra.config.k8config import K8LocalConfigurationContainer
-from cltl.combot.infra.di_container import singleton
-from cltl.combot.infra.resource.threaded import ThreadedResourceContainer
-from event.consumer import ProcessorWorker
+from cltl.combot.infra.config.k8config import copy_k8_config, K8_CONFIG, K8_CONFIG_DIR
+from cltl.combot.infra.config.local import load_configuration, LocalConfigurationManager, CONFIG, ADDITIONAL_CONFIGS
+from cltl.combot.infra.resource.threaded import ThreadedResourceManager
 
 logger = logging.getLogger(__name__)
 
-K8LocalConfigurationContainer.load_configuration()
-run_local = K8LocalConfigurationContainer.get_config("cltl.chat-ui.events", "local")
-
-
-if run_local.lower() == 'true':
-    class ApplicationContainer(SynchronousEventBusContainer, ThreadedResourceContainer, K8LocalConfigurationContainer):
-        logger.info("Initialized ApplicationContainer with local event bus")
-else:
-    class ApplicationContainer(KombuEventBusContainer, ThreadedResourceContainer, K8LocalConfigurationContainer):
-        logger.info("Initialized ApplicationContainer with kombu event bus")
-
-
-class Application(ApplicationContainer):
-    @property
-    @singleton
-    def processor(self) -> ChatProcessor:
-        return ReverseChatProcessor()
-
-    @property
-    @singleton
-    def consumer(self) -> TopicWorker:
-        return ProcessorWorker(self.processor, self.event_bus, self.resource_manager, self.config_manager)
-
-    def run(self):
-        self.consumer.start()
-
 
 if __name__ == '__main__':
-    Application().run()
+    configs = ADDITIONAL_CONFIGS
+    try:
+        copy_k8_config(K8_CONFIG_DIR, K8_CONFIG)
+        configs += [K8_CONFIG]
+    except OSError:
+        logger.exception("Could not load kubernetes config map from %s to %s", K8_CONFIG_DIR, K8_CONFIG)
+
+    config = load_configuration(CONFIG, configs)
+    run_local = config.get_config("cltl.chat-backend.events", "local")
+
+    if run_local.lower() == 'true':
+        application_container = ApplicationContainer(SynchronousEventBus(),
+                                                     ThreadedResourceManager(),
+                                                     LocalConfigurationManager(config))
+        logger.info("Initialized Application with local event bus")
+    else:
+        register('cltl-json',
+                 lambda x: json.dumps(x, default=vars),
+                 lambda x: json.loads(x, object_hook=lambda d: SimpleNamespace(**d)),
+                 content_type='application/json',
+                 content_encoding='utf-8')
+
+        configuration_manager = LocalConfigurationManager(config)
+        application_container = ApplicationContainer(KombuEventBus('cltl-json', configuration_manager),
+                                                     ThreadedResourceManager(),
+                                                     configuration_manager)
+        logger.info("Initialized ApplicationContainer with kombu event bus")
+
+        Application(application_container).run()
